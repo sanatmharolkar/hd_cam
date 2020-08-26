@@ -3,27 +3,42 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/videoio/videoio.hpp>
 #include <opencv2/xfeatures2d/nonfree.hpp>
+#include <opencv2/calib3d/calib3d.hpp>
 
-#include <gst/gst.h>
+#include <ros/ros.h>
+#include <ros/package.h>
 
 #include <stdio.h>
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 #include <thread>
+#include <boost/filesystem.hpp>
 #include <future>
 
 using namespace cv;
 using namespace std;
+namespace fs = boost::filesystem;
+
+// Stereo params for three cam setup
+string pkgPath = ros::package::getPath("hd_cam");
+fs::path calibPath(pkgPath + "/calib/three_cam_setup");
+fs::path clParamsPath = calibPath / fs::path("cl_stereoParams.txt");
+fs::path crParamsPath = calibPath / fs::path("cr_stereoParams.txt");
 
 // Set parameters for grabbing frames from each camera
 int BACKEND = CAP_V4L2;
 int CODEC = VideoWriter::fourcc('M', 'J', 'P', 'G');
-int WINSIZE[2] = {1440, 270};
+// int WINSIZE[2] = {1440, 270};
 int FRAMESIZE[2] = {1280, 720};
 int BUFFERSIZE = 1;
+
+Mat K_c1, D_c1, K_l, D_l, R_lc, T_lc, Rect_c1, Rect_l, P_c1, P_l, Q_lc, K_c2, D_c2, K_r, D_r, R_rc, T_rc, Rect_c2, Rect_r, P_c2, P_r, Q_rc, mapc11, mapc12, mapl1, mapl2, mapc21, mapc22, mapr1, mapr2;
 
 Mat grabber(VideoCapture device);
 void sender(VideoWriter streamer, Mat frame);
 Mat processor(Mat f1, Mat f2, Mat f3);
+Mat vecToMat(vector<double> vec, int rows, int cols);
 
 int main(int argc, char **argv) {
     int device1 = 0;
@@ -44,8 +59,57 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    // Create display window
-    // namedWindow("stream", CV_WINDOW_AUTOSIZE);
+    // Read stereo params for 3 cam setup
+    /* cout << "Reading pair-wise stereo params..." << endl;
+    string delimiter = ":";
+
+    cout << "Centre-Left Pair: " << endl;
+    vector<vector<double>> clParams;
+    ifstream clInput(clParamsPath.string());
+    for (string line; getline(clInput, line); ) {
+        string arr_ = line.substr(line.find(delimiter) + 1);
+        vector<double> vec_;
+        istringstream iss(arr_);
+        copy(istream_iterator<double>(iss), istream_iterator<double>(), back_inserter(vec_));
+        clParams.push_back(vec_);
+        vec_.clear();
+    }
+    K_c1 = vecToMat(clParams[0], 3, 3);
+    cout << "K_c1: " << endl << K_c1 << endl;
+    D_c1 = vecToMat(clParams[1], 1, 5);
+    cout << "D_c1: " << endl << D_c1 << endl;
+    K_l = vecToMat(clParams[2], 3, 3);
+    cout << "K_l: " << endl << K_l << endl;
+    D_l = vecToMat(clParams[3], 1, 5);
+    cout << "D_l: " << endl << D_l << endl;
+    R_lc = vecToMat(clParams[4], 3, 3);
+    cout << "R_lc: " << endl << R_lc << endl;
+    T_lc = vecToMat(clParams[5], 3, 1);
+    cout << "T_lc: " << endl << T_lc << endl;
+
+    cout << "Centre-Right Pair: " << endl;
+    vector<vector<double>> crParams;
+    ifstream crInput(crParamsPath.string());
+    for (string line; getline(crInput, line); ) {
+        string arr_ = line.substr(line.find(delimiter) + 1);
+        vector<double> vec_;
+        istringstream iss(arr_);
+        copy(istream_iterator<double>(iss), istream_iterator<double>(), back_inserter(vec_));
+        crParams.push_back(vec_);
+        vec_.clear();
+    }
+    K_c2 = vecToMat(crParams[0], 3, 3);
+    cout << "K_c2: " << endl << K_c2 << endl;
+    D_c2 = vecToMat(crParams[1], 1, 5);
+    cout << "D_c2: " << endl << D_c2 << endl;
+    K_r = vecToMat(crParams[2], 3, 3);
+    cout << "K_r: " << endl << K_r << endl;
+    D_r = vecToMat(crParams[3], 1, 5);
+    cout << "D_r: " << endl << D_r << endl;
+    R_rc = vecToMat(crParams[4], 3, 3);
+    cout << "R_rc: " << endl << R_rc << endl;
+    T_rc = vecToMat(crParams[5], 3, 1);
+    cout << "T_rc: " << endl << T_rc << endl; */
 
     // Video capture object for first camera
     VideoCapture cap1(device1, BACKEND);
@@ -70,7 +134,7 @@ int main(int argc, char **argv) {
 
     // Gstreamer pipeline
     VideoWriter streamer;
-    streamer.open("appsrc ! videoconvert ! x264enc tune=zerolatency byte-stream=true threads=4 ! queue ! rtph264pay pt=96 ! udpsink host=192.168.0.172 port=5000", CODEC, (double)60, Size(3 * FRAMESIZE[0], FRAMESIZE[1]), true);
+    streamer.open("appsrc ! queue ! videoconvert ! x264enc tune=zerolatency byte-stream=true bitrate=3072 threads=4 ! queue ! rtph264pay pt=96 ! udpsink host=192.168.1.103 port=5000 sync=false", CODEC, (double)60, Size(3 * FRAMESIZE[0], FRAMESIZE[1]), true);
     if (!streamer.isOpened()) {
         cout << "Could not open streamer." << endl;
         return -1;
@@ -108,8 +172,8 @@ int main(int argc, char **argv) {
         Mat f = futureF.get();
         
         future<void> futureS = async(launch::async, sender, streamer, f);
-        /* resize(f, f, Size(WINSIZE[0], WINSIZE[1]));
-        imshow("stream", f);
+        // resize(f, f, Size(WINSIZE[0], WINSIZE[1]));
+        /* imshow("stream", f);
         if ((char)waitKey(1) == 27) {
             break;
         } */
@@ -139,5 +203,14 @@ Mat processor(Mat f1, Mat f2, Mat f3) {
     Mat f_, f;
     hconcat(f1, f2, f_);
     hconcat(f_, f3, f);
+
     return f;
+}
+
+// Vec to Mat
+Mat vecToMat(vector<double> vec, int rows, int cols) {
+    Mat m = Mat(rows, cols, CV_64FC1);
+    memcpy(m.data, vec.data(), vec.size() * sizeof(double));
+    cout << m << endl;
+    return m;
 }

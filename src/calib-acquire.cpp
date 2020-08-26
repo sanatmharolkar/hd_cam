@@ -193,8 +193,8 @@ int stereoCalib(int device1, int device2) {
         imwrite(f1_file, f1);
         string f2_file = f2Path.string() + "/" + to_format(i) + ".png";
         imwrite(f2_file, f2);
-
         cout << "Image " << to_format(i) << " saved." << endl;
+
         this_thread::sleep_for(chrono::seconds(1));
     }
 

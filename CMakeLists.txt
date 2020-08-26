@@ -29,6 +29,7 @@ include_directories(
 add_executable(acquire src/acquire.cpp)
 add_executable(calib-acquire src/calib-acquire.cpp)
 add_executable(acquire-ros src/acquire-ros.cpp)
+add_executable(grab-single src/grab-single.cpp)
 
 target_link_libraries(acquire
   ${catkin_LIBRARIES}
@@ -41,6 +42,11 @@ target_link_libraries(calib-acquire
 )
 
 target_link_libraries(acquire-ros
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+
+target_link_libraries(grab-single
   ${catkin_LIBRARIES}
   ${OpenCV_LIBS}
 )
